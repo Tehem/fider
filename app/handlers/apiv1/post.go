@@ -15,9 +15,13 @@ import (
 // SearchPosts return existing posts based on search criteria
 func SearchPosts() web.HandlerFunc {
 	return func(c *web.Context) error {
+		viewQueryParams := c.QueryParam("view")
+		if viewQueryParams == "" {
+			viewQueryParams = "all" // Set default value to "all" if not provided
+		}
 		searchPosts := &query.SearchPosts{
 			Query: c.QueryParam("query"),
-			View:  c.QueryParam("view"),
+			View:  viewQueryParams,
 			Limit: c.QueryParam("limit"),
 			Tags:  c.QueryParamAsArray("tags"),
 		}
@@ -169,10 +173,7 @@ func DeletePost() web.HandlerFunc {
 			return c.Failure(err)
 		}
 
-		if action.Text != "" {
-			// Only send notification if user wrote a comment.
-			c.Enqueue(tasks.NotifyAboutDeletedPost(action.Post))
-		}
+		c.Enqueue(tasks.NotifyAboutDeletedPost(action.Post, action.Text != ""))
 
 		return c.Ok(web.Map{})
 	}
@@ -214,6 +215,34 @@ func GetComment() web.HandlerFunc {
 		}
 
 		return c.Ok(commentByID.Result)
+	}
+}
+
+// ToggleReaction adds or removes a reaction on a comment
+func ToggleReaction() web.HandlerFunc {
+	return func(c *web.Context) error {
+		action := new(actions.ToggleCommentReaction)
+		if result := c.BindTo(action); !result.Ok {
+			return c.HandleValidation(result)
+		}
+
+		getComment := &query.GetCommentByID{CommentID: action.Comment}
+		if err := bus.Dispatch(c, getComment); err != nil {
+			return c.Failure(err)
+		}
+
+		toggleReaction := &cmd.ToggleCommentReaction{
+			Comment: getComment.Result,
+			Emoji:   action.Reaction,
+			User:    c.User(),
+		}
+		if err := bus.Dispatch(c, toggleReaction); err != nil {
+			return c.Failure(err)
+		}
+
+		return c.Ok(web.Map{
+			"added": toggleReaction.Result,
+		})
 	}
 }
 
